@@ -1,5 +1,4 @@
 use crate::controller::Status;
-
 use super::bluetooth::{get_battery_percentage, get_bluetooth_address};
 use anyhow::Result;
 use hidapi::{DeviceInfo, HidApi};
@@ -44,7 +43,6 @@ fn get_xbox_controller_name(product_id: u16) -> &'static str {
         _ => "Xbox Unknown",
     }
 }
-
 pub fn is_xbox_controller(vendor_id: u16) -> bool {
     vendor_id == MS_VENDOR_ID
 }
@@ -60,63 +58,23 @@ pub fn update_xbox_controller(controller: &mut Controller, bluetooth: bool) {
     };
 }
 
-fn get_battery_percentage_from_upower(device_model: &str) -> Option<u8> {
-    // Connect to the system bus
-    if let Ok(connection) = Connection::system() {
-        // Query the UPower service
-        if let Ok(proxy) = zbus::Proxy::new(
-            &connection,
-            "org.freedesktop.UPower",
-            "/org/freedesktop/UPower",
-            "org.freedesktop.UPower",
-        ) {
-            // Get all devices
-            if let Ok(devices) = proxy.call_method::<Vec<String>>("EnumerateDevices", &()) {
-                for device_path in devices {
-                    // Create a proxy for the specific device
-                    if let Ok(device_proxy) = zbus::Proxy::new(
-                        &connection,
-                        "org.freedesktop.UPower",
-                        &device_path,
-                        "org.freedesktop.UPower.Device",
-                    ) {
-                        // Match the device model
-                        if let Ok(model) = device_proxy.get_property::<String>("Model") {
-                            if model == device_model {
-                                // Get the battery percentage
-                                if let Ok(percentage) = device_proxy.get_property::<f64>("Percentage") {
-                                    return Some(percentage as u8);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 pub fn parse_xbox_controller_data(
     device_info: &DeviceInfo,
     _hidapi: &HidApi,
 ) -> Result<Controller> {
-    let capacity = match get_bluetooth_address(device_info) {
+    let capacity: u8 = match get_bluetooth_address(device_info) {
         Ok(address) => match get_battery_percentage(address) {
             Ok(percentage) => percentage,
             Err(err) => {
-                error!("get_battery_percentage via Bluetooth failed because {}", err);
-                // Attempt to fetch battery level via UPower
-                get_battery_percentage_from_upower("Microsoft Xbox Controller").unwrap_or(0)
+                error!("get_battery_percentage failed because {}", err);
+                0
             }
         },
         Err(err) => {
             error!("get_bluetooth_address failed because {}", err);
-            // Attempt to fetch battery level via UPower
-            get_battery_percentage_from_upower("Microsoft Xbox Controller").unwrap_or(0)
+            0
         }
     };
-
     let name = get_xbox_controller_name(device_info.product_id());
 
     let controller = Controller::from_hidapi(device_info, name, capacity, Status::Unknown);
